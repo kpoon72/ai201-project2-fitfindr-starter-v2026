@@ -162,10 +162,10 @@ first result as `session["selected_item"]` and goes to `suggest_outfit`.
 
 To find that specific change, the empty branch re-runs `search_listings`
 (no model call) with one filter dropped at a time: no size, no price
-ceiling, then only the first keyword. It reports which relaxation would
-return listings, e.g. *"Nothing in size XXS — 3 listings match without the
-size filter."* If no single relaxation helps, it says so and suggests broader
-words, giving the cheapest price in the data.
+ceiling, then neither. It reports which relaxation would
+return listings, e.g. *"Drop the size XS and you'd get 4 listing(s),
+starting at $33."* If no relaxation helps, it says so, suggests broader
+words, and gives the cheapest price in the data.
 
 **Where it lives:** `agent.py::run_agent`
 
@@ -182,14 +182,22 @@ words, giving the cheapest price in the data.
 3. `search_results`: the list `search_listings` returned.
 4. Branch on `search_results`. If it's empty, set `error` and stop.
 5. `selected_item`: `search_results[0]`.
-6. `outfit_suggestion`: from `suggest_outfit(session["selected_item"],
-   session["wardrobe"])`.
+6. `outfit_input_id`: the `id` of the item handed to `suggest_outfit`,
+   recorded at the call (for criterion 3). Then `outfit_suggestion`: from
+   `suggest_outfit(session["selected_item"], session["wardrobe"])`.
 7. `fit_card`: from `create_fit_card(session["outfit_suggestion"],
    session["selected_item"])`.
 
 Each tool reads its inputs from the session, not from a local variable, so
 the item that reached `suggest_outfit` is by construction the one in
 `session["selected_item"]`.
+
+**How the loop picks each step:** `run_agent` is a `while` loop. Each pass
+calls `trace.check_iterations` and then `_next_step(session)`, which reads
+the session and returns the first thing not yet done: `parse` → `search` →
+`stop_empty` if `search_results` is empty → `select` → `suggest_outfit` →
+`create_fit_card` → `done`. Every step chosen is appended to
+`session["steps_run"]`, so a run shows which path it took.
 
 ---
 
@@ -203,9 +211,58 @@ the item that reached `suggest_outfit` is by construction the one in
 **One full query**
 
 ```
-$ python app.py ask '...'
+$ python app.py ask 'vintage graphic tee under $30, size M'
+
+  Found:    Y2K Baby Tee — Butterfly Print — $18.0 on depop
+
+  Outfit:   Outfit 1:
+- Y2K Baby Tee — Butterfly Print
+- Baggy straight-leg jeans, dark wash
+- Vintage black denim jacket
+- Chunky white sneakers
+- Black crossbody bag
+
+Outfit 2:
+- Y2K Baby Tee — Butterfly Print
+- Wide-leg khaki trousers
+- Brown leather belt
+- Black combat boots
+
+  Fit card: Found the dreamiest 2000s butterfly tee and had to share how to style it! Throw it on with dark baggy denim and a black jacket for ultimate Y2K vibes, or dress it up with khaki trousers and combat boots. Grab it now on depop for just $18 before I change my mind. 🦋✨ #depop #y2k
+```
+
+The same loop on queries that match nothing. Each stops after the search,
+makes no model call, and names what to change:
 
 ```
+$ python app.py ask 'denim jacket under $10'
+
+  No listings matched 'denim jacket' under $10. Raise or remove the $10 limit and you'd get 8 listing(s), starting at $24. Best match: Denim Jacket — Light Wash, Cropped ($42, size S).
+
+0 model calls this session
+
+$ python app.py ask 'track jacket size XS'
+
+  No listings matched 'track jacket' in size XS. Drop the size XS and you'd get 4 listing(s), starting at $33. Best match: 90s Track Jacket — Navy/White Stripe ($45, size M).
+
+0 model calls this session
+
+$ python app.py ask 'designer ballgown size XXS under $5'
+
+  No listings matched 'designer ballgown' in size XXS under $5. Nothing in the data matches the words 'designer ballgown' even without filters. Try broader words like 'jacket', 'jeans', 'tee' or 'dress'. Prices in the data start at $12.
+
+0 model calls this session
+```
+
+Session state after the happy path, checked from the session itself:
+
+```
+selected: lst_002 | search[0]: lst_002 | into suggest_outfit: lst_002
+steps: ['parse', 'search', 'select', 'suggest_outfit', 'create_fit_card', 'done']
+```
+
+And after the empty one: `steps=['parse', 'search', 'stop_empty']`,
+`fit_card=None`.
 
 **The three tools, tested one at a time**
 
