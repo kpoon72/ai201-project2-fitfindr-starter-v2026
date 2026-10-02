@@ -63,7 +63,14 @@ What I found reading `data/listings.json` and `data/wardrobe_schema.json`
 
 <!-- Three or four sentences: what a user asks for, and what they get back. -->
 
-
+FitFindr takes a plain-language thrift request, like
+`'vintage graphic tee under $30, size M'`, and searches 40 secondhand
+listings from Depop, ThredUp and Poshmark for the best match within that
+price and size. It then suggests one or two outfits pairing the find with
+pieces from the user's saved wardrobe, or gives general styling ideas if the
+wardrobe is empty, and writes a short caption the user could actually post.
+If nothing matches, it stops before any model call and says which filter to
+change (the size, the price limit, or the words) to get results.
 
 ---
 
@@ -313,17 +320,41 @@ Can't write a fit card: no outfit suggestion was provided.
      "I gave Claude my search_listings spec. It returned None on no match
      instead of an empty list, so I changed it" is the level we want. -->
 
-**Moment 1**
+I used Claude Code throughout this project, with the brief as my
+instructions. It drafted the tool specs, the code and this README. I
+committed each milestone myself.
 
-- *What I asked for:*
-- *What came back:*
-- *What I changed:*
+**Moment 1: the outfit prompt leaked its own formatting**
 
-**Moment 2**
+- *What I asked for:* `suggest_outfit` and `create_fit_card` built to the
+  Tool Inventory spec, using one shared helper to turn a listing into prompt
+  text.
+- *What came back:* The helper's first line was
+  `Vintage Levi's 501 Jeans — Medium Wash — 38 dollars on depop`. In the
+  per-tool test, the model copied that whole line into both outfits
+  ("tucked into the Vintage Levi's 501 Jeans — Medium Wash — 38 dollars on
+  depop"), so the outfit read like a price tag.
+- *What I changed:* `_describe_item` in `tools.py` now puts `title:`,
+  `price:` and `platform:` on separate labelled lines. The re-run outfit
+  just says "the vintage Levi's 501 jeans".
 
-- *What I asked for:*
-- *What came back:*
-- *What I changed:*
+**Moment 2: the empty-search message said the wrong price**
+
+- *What I asked for:* An empty-search message that names what the user could
+  change. "No results" doesn't count.
+- *What came back:* It re-ran the search with each filter dropped, which
+  works, but printed *"finds 8 listing(s), from $24 (e.g. Denim Jacket —
+  Light Wash, Cropped)"*. That jacket costs $42, so the message read as if it
+  cost $24.
+- *What I changed:* `explain_empty` in `agent.py` now reports the cheapest
+  price and the best match separately, with the match's own price and size:
+  *"…starting at $24. Best match: Denim Jacket — Light Wash, Cropped ($42,
+  size S)."*
+
+**On the criteria:** Claude drafted criteria 3–5 and the reasons under all
+five. The brief warns that a criterion you didn't write is one you can't
+defend, so I read each one against the data and the code before committing
+it.
 
 <!-- ═══════════════════════ UNIT 4 — THE TEST ═══════════════════════
 
