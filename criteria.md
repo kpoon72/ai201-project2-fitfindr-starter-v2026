@@ -24,10 +24,12 @@ data earns credit; *"80% seemed reasonable"* does not.
 Given a query that matches at least one listing, the agent completes all three
 tool calls and returns a fit card — in at least 4 of 5 tries.
 
-**Why this target:**
-<!-- Why 4 of 5 and not 5 of 5? Something about your search, probably —
-     "my search is a plain keyword match and some phrasings will miss" is a
-     real answer. -->
+**Why this target:** Search is deterministic, but the run has two model
+calls through a free-tier quota, and the query parser is regex. One rate-limit
+or service error, or a phrasing the regex mis-parses (for example a price
+written as "30 bucks"), loses a try even when the right listing exists. I
+allow one miss in five for that. Two misses would mean something in my own
+code is wrong, not bad luck.
 
 ---
 
@@ -36,66 +38,79 @@ tool calls and returns a fit card — in at least 4 of 5 tries.
 Given a query that matches no listings, the agent stops before calling
 `suggest_outfit` and returns a message naming what to change — 5 of 5 tries.
 
-**Why this target:**
-<!-- Why is 5 of 5 reasonable here when criterion 1 isn't? What's different
-     about this path? -->
+**Why this target:** This path makes no model call. The branch is an `if`
+on whether `search_results` is empty, and the message comes from re-running
+my own search. Nothing in it varies run to run, so one miss means the branch
+is broken, not unlucky. "Naming what to change" means the message names at
+least one specific filter from the query (the size, the price ceiling, or a
+keyword) and says what to do about it. "No results" alone fails.
 
 ---
 
-## 3. Something about state
+## 3. The item search found is the item the later tools received
 
-<!-- YOU WRITE THIS ONE.
+Given a query that completes all three tools, the session shows the same
+listing at every step, in 5 of 5 tries. Three `id`s must be equal:
+`session["search_results"][0]["id"]`, `session["selected_item"]["id"]`, and
+`session["outfit_input_id"]` (the `id` of the dict actually passed into
+`suggest_outfit`, recorded at the call). And `session["fit_card"]` must
+contain the selected item's price as `$NN`.
 
-     How would you know that the item your search found is the same item the
-     next tool received? Name something countable or observable.
-
-     This is the criterion people find hardest, because state failure doesn't
-     look like state failure — it looks like a tool problem. Something that
-     compares session["selected_item"] against what actually reached
-     suggest_outfit is the shape you're after. -->
-
-
-
-**Why this target:**
-
-
-
----
-
-## 4. Something about the fit card
-
-<!-- YOU WRITE THIS ONE.
-
-     The fit card calls a model, so the same input can produce different words
-     each time. That's not a bug — it's the nature of the tool. So what would
-     make it acceptable?
-
-     Think about what you'd actually be unhappy to see. A caption that never
-     mentions the price? Two different items producing the same opening
-     sentence? A card longer than a caption anyone would post? Any of those can
-     be turned into a number. -->
-
-
-
-**Why this target:**
-
+**Why this target:** Handing the item along is plain Python with no model in
+it, so any mismatch is a wiring bug, not variation, and 4 of 5 would be
+excusing a bug. The price check covers the hop into `create_fit_card`: the
+price only reaches the caption if that tool got the right item. If the model
+drops the price, this fails too, which I accept, because criterion 4 would
+flag the same card.
 
 
 ---
 
-## 5. Your choice
+## 4. The fit card reads like a post and names the facts
 
-<!-- YOU WRITE THIS ONE TOO.
+Run the same matching query 5 times with caching off. At least 4 of the 5
+fit cards must pass all four checks:
+(a) 2 to 4 sentences, counting a sentence as text ending in `.`, `!` or `?`
+and ignoring hashtags and emoji;
+(b) 400 characters or fewer;
+(c) contains the selected item's price as `$NN` (`$24` or `$24.00`);
+(d) contains the platform name, ignoring case.
+Separately, no two of the 5 cards may have the same first sentence, word for
+word.
 
-     Pick something you actually care about getting right. Speed, the empty
-     wardrobe path, what happens when the model can't be reached, whether the
-     search respects a price ceiling — anything, as long as it names a number
-     or an observable outcome. -->
+**Why this target:** The wording should vary, so I don't check wording. I
+check the facts a buyer needs and a length someone would actually post. The
+model sometimes ignores a length rule or writes the price as "24 bucks", so I
+allow one miss in five. Two misses would mean my prompt isn't constraining it.
+The first-sentence rule exists because identical openings mean the cache is on
+or the prompt is a template, which is the failure the brief warns about.
 
 
+---
 
-**Why this target:**
+## 5. Search respects the price and size the user asked for
 
+For these 5 queries:
+- `vintage graphic tee under $30`
+- `90s track jacket in size M`
+- `platform sneakers size 8`
+- `denim jacket under $50`
+- `jeans size W28 under $35`
+
+every listing in `session["search_results"]` must have `price` at or below
+the stated ceiling, and a `size` that matches the stated size under the rule
+in the README's Tool Inventory. For example, `M` matches `S/M` but not `XL`,
+and `8` matches `US 8` but not `US 8.5`. Also, `session["parsed"]` must hold
+that exact ceiling and size. Target: 5 of 5 queries with zero violating
+listings.
+
+**Why this target:** A thrift search that shows a $45 jacket to someone who
+said "under $30" is broken in a way the user notices at once. The size data
+mixes letter, waist, shoe and "One Size" formats, and a substring test fails
+quietly (`"l" in "xl"`). There's no model in this path, so any violation is
+a bug in my parser or my size matcher. The queries are picked to hit the
+edge cases: `S/M` and `M/L` for `M`, `US 8` beside `US 8.5`, and a waist
+size combined with a price.
 
 
 ---
