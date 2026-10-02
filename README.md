@@ -37,6 +37,28 @@
 
 <!-- ═══════════════════════ UNIT 3 — THE BUILD ═══════════════════════ -->
 
+## Data Notes
+
+What I found reading `data/listings.json` and `data/wardrobe_schema.json`
+(Milestone 1), before writing any tool.
+
+- **Listing fields:** `id`, `title`, `description`, `category`, `style_tags`
+  (list), `size`, `condition`, `price` (float), `colors` (list), `brand`
+  (str or None), `platform`.
+- **40 listings.** Categories: tops 15, bottoms 10, outerwear 8, shoes 4,
+  accessories 3. Platforms: depop, thredUp, poshmark.
+- **`brand` is None on 32 of 40**, so nothing may assume a brand exists.
+- **Sizes are not one system.** Letter sizes (`S`, `M`, `L/XL`, `S/M`),
+  annotated letters (`XL (oversized)`), waist sizes (`W28`, `W30 L30`), shoe
+  sizes (`US 8.5`) and `One Size` variants. A substring test is wrong here:
+  `"s" in "us 9"` and `"l" in "xl"` are both True.
+- **Prices** run $12–$75, all floats.
+- **Wardrobe item fields:** `id`, `name`, `category`, `colors`, `style_tags`,
+  `notes` (sometimes null). A wardrobe is `{"items": [...]}`; the empty wardrobe is
+  `{"items": []}` — same shape, empty list.
+
+---
+
 ## What This Does
 
 <!-- Three or four sentences: what a user asks for, and what they get back. -->
