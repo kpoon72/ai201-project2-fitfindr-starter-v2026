@@ -209,19 +209,40 @@ $ python app.py ask '...'
 
 **The three tools, tested one at a time**
 
-```
-$ python -c "from tools import search_listings; print(search_listings('graphic tee', max_price=30))"
+`search_listings` (printing title, size and price instead of the whole dicts,
+so it fits on screen):
 
 ```
+$ python -c "from tools import search_listings; print([(r['title'], r['size'], r['price']) for r in search_listings('graphic tee', max_price=30)])"
+[('Y2K Baby Tee — Butterfly Print', 'S/M', 18.0), ('Graphic Tee — 2003 Tour Bootleg Style', 'L', 24.0), ('Vintage Band Tee — Faded Grey', 'L', 19.0), ('Vintage Graphic Hoodie — Faded Black', 'L', 26.0), ('Mesh Long-Sleeve Top — Black', 'S/M', 15.0), ('Low-Rise Cargo Pants — Khaki', 'W29', 27.0), ('Oversized Crewneck Sweatshirt — Vintage Navy', 'XL (fits oversized)', 20.0)]
+
+$ python -c "from tools import search_listings; print(search_listings('designer ballgown', size='XXS', max_price=5))"
+[]
+```
+
+`suggest_outfit`:
 
 ```
-$ python -c "from tools import suggest_outfit; ..."
+$ python -c "from tools import suggest_outfit; from utils.data_loader import get_example_wardrobe, load_listings; print(suggest_outfit(load_listings()[0], get_example_wardrobe()))"
+Outfit 1:
+Pair the vintage Levi's 501 jeans with the white ribbed tank top tucked in.
+Layer the slightly cropped vintage black denim jacket over top.
+Finish the look with chunky white sneakers and the black crossbody bag.
 
+Outfit 2:
+Style the vintage Levi's 501 jeans with the really oversized grey crewneck sweatshirt worn loose.
+Add the brown leather belt to cinch the waist if desired.
+Complete the outfit with black combat boots for an effortless streetwear edge.
 ```
 
-```
-$ python -c "from tools import create_fit_card; ..."
+`create_fit_card`:
 
+```
+$ python -c "from tools import create_fit_card; from utils.data_loader import load_listings; print(create_fit_card('jeans and white sneakers', load_listings()[0]))"
+Nothing beats a broken-in pair of 501s with that ideal knee fading. I'm obsessed with throwing these on with crisp white sneakers for the ultimate effortless street style fit. Grab them on depop for just $38 before I change my mind! 👖✨ #VintageLevis #Streetwear
+
+$ python -c "from tools import create_fit_card; from utils.data_loader import load_listings; print(create_fit_card('', load_listings()[0]))"
+Can't write a fit card: no outfit suggestion was provided.
 ```
 
 ---

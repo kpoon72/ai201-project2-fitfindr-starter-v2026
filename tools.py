@@ -20,9 +20,67 @@ That last line is what your loop branches on. "Returns a list" earns nothing —
 the description has to say what is *in* the list.
 """
 
-import config  # noqa: F401 — you'll use this in search_listings
+import re
+
+import config
 from generate import generate
 from utils.data_loader import load_listings
+
+
+# Words that say nothing about the item. Matching on them would score every
+# listing, so they're dropped from the description before scoring.
+_STOPWORDS = {
+    "a", "an", "the", "and", "or", "for", "in", "on", "of", "with", "to",
+    "i", "im", "me", "my", "want", "need", "looking", "something", "some",
+    "any", "size", "under", "below", "less", "than", "max", "around",
+}
+
+
+def _keywords(text: str) -> set[str]:
+    """Lowercase words with stopwords removed and a trailing plural 's' dropped."""
+    words = re.findall(r"[a-z0-9]+", text.lower())
+    out = set()
+    for word in words:
+        if word in _STOPWORDS:
+            continue
+        if len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
+            word = word[:-1]
+        out.add(word)
+    return out
+
+
+def _size_tokens(size: str) -> set[str]:
+    """
+    Split a size into whole tokens, per the Tool Inventory rule.
+
+    "S/M" -> {S, M}   "US 8.5" -> {8.5}   "W30 L30" -> {W30, 30, L30}
+    "XL (oversized)" -> {XL, OVERSIZED}
+    """
+    tokens = set()
+    for raw in re.split(r"[/\s()]+", size.upper()):
+        if not raw or raw == "US":
+            continue
+        tokens.add(raw)
+        if re.fullmatch(r"W\d+", raw):
+            tokens.add(raw[1:])
+    return tokens
+
+
+def _size_matches(wanted: str, listing_size: str) -> bool:
+    if "ONE SIZE" in listing_size.upper():
+        return True
+    return bool(_size_tokens(wanted) & _size_tokens(listing_size))
+
+
+def _score(listing: dict, wanted: set[str]) -> int:
+    """Keyword overlap. Title and style-tag hits count double."""
+    strong = _keywords(listing["title"]) | _keywords(" ".join(listing["style_tags"]))
+    weak = (
+        _keywords(listing["description"])
+        | _keywords(listing["category"])
+        | _keywords(" ".join(listing["colors"]))
+    )
+    return sum(2 if word in strong else 1 if word in weak else 0 for word in wanted)
 
 
 # ── Tool 1: search_listings ───────────────────────────────────────────────────
@@ -78,8 +136,23 @@ def search_listings(
     Test it from a terminal before you move on:
         python -c "from tools import search_listings; print(search_listings('graphic tee', max_price=30))"
     """
-    # TODO: replace this with your implementation
-    return []
+    wanted = _keywords(description or "")
+    if not wanted:
+        return []
+
+    scored = []
+    for listing in load_listings():
+        if max_price is not None and listing["price"] > max_price:
+            continue
+        if size and not _size_matches(size, listing["size"]):
+            continue
+        score = _score(listing, wanted)
+        if score > 0:
+            scored.append((score, listing))
+
+    # sorted() is stable, so equal scores keep data-file order.
+    scored = sorted(scored, key=lambda pair: pair[0], reverse=True)
+    return [listing for _, listing in scored[: config.SEARCH_RESULT_LIMIT]]
 
 
 # ── Tool 2: suggest_outfit ────────────────────────────────────────────────────
@@ -112,8 +185,33 @@ def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
     Test it from a terminal before you move on:
         python -c "from tools import suggest_outfit; from utils.data_loader import get_example_wardrobe, load_listings; print(suggest_outfit(load_listings()[0], get_example_wardrobe()))"
     """
-    # TODO: replace this with your implementation
-    return ""
+    item = _describe_item(new_item)
+    items = (wardrobe or {}).get("items") or []
+
+    if not items:
+        prompt = (
+            f"Someone is thinking about buying this thrifted item:\n{item}\n\n"
+            "They haven't told us what they own. Suggest one or two outfits "
+            "built around it, describing the kinds of pieces that pair well "
+            "(cut, color, shoes, layers). Plain text, no more than 8 lines."
+        )
+    else:
+        owned = "\n".join(
+            f"- {w['name']} ({w['category']}; colors: {', '.join(w.get('colors') or [])})"
+            + (f" — {w['notes']}" if w.get("notes") else "")
+            for w in items
+        )
+        prompt = (
+            f"Someone is thinking about buying this thrifted item:\n{item}\n\n"
+            f"Their wardrobe:\n{owned}\n\n"
+            "Suggest one or two outfits that pair the new item with pieces "
+            "they already own. Name each owned piece exactly as written in "
+            "the wardrobe list. Plain text, no more than 8 lines."
+        )
+
+    text = generate(prompt, system="You are a practical thrift stylist.").strip()
+    # Spec: never return "". A blank model reply still has to be a usable str.
+    return text or f"Pair the {new_item['title']} with simple basics in neutral colors."
 
 
 # ── Tool 3: create_fit_card ───────────────────────────────────────────────────
@@ -152,5 +250,41 @@ def create_fit_card(outfit: str, new_item: dict) -> str:
     Test it from a terminal before you move on:
         python -c "from tools import create_fit_card; from utils.data_loader import load_listings; print(create_fit_card('jeans and white sneakers', load_listings()[0]))"
     """
-    # TODO: replace this with your implementation
-    return ""
+    if not outfit or not outfit.strip():
+        return "Can't write a fit card: no outfit suggestion was provided."
+
+    price = f"${new_item['price']:.0f}"
+    prompt = (
+        f"Write a caption for a social post about this thrift find.\n\n"
+        f"Item: {_describe_item(new_item)}\n\n"
+        f"How it's being styled:\n{outfit}\n\n"
+        "Rules:\n"
+        "- 2 to 4 sentences, 400 characters or fewer in total.\n"
+        f"- Mention the price written exactly as {price}, and the platform "
+        f"{new_item['platform']}, once each.\n"
+        "- Sound like a real person posting, not a product listing. Be "
+        "specific about the vibe. A couple of emoji or hashtags is fine.\n"
+        + ("- Do not mention a brand.\n" if not new_item.get("brand") else "")
+        + "Return only the caption."
+    )
+    return generate(prompt).strip() or (
+        f"Thrifted the {new_item['title']} for {price} on {new_item['platform']}."
+    )
+
+
+def _describe_item(item: dict) -> str:
+    """One listing as prompt text. Leaves brand out when it's None."""
+    parts = [
+        f"title: {item['title']}",
+        f"price: ${item['price']:.0f}",
+        f"platform: {item['platform']}",
+        f"category: {item['category']}",
+        f"size: {item['size']}",
+        f"condition: {item['condition']}",
+        f"colors: {', '.join(item.get('colors') or [])}",
+        f"style: {', '.join(item.get('style_tags') or [])}",
+    ]
+    if item.get("brand"):
+        parts.append(f"brand: {item['brand']}")
+    parts.append(f"description: {item['description']}")
+    return "\n".join(parts)
