@@ -435,17 +435,121 @@ that produced it:
      the same length, your branch isn't working — and this is the fastest way
      anyone will ever find that out. -->
 
-**Happy path**
+Produced by `agent.py::run_agent`, which calls `trace.step()` once per step
+(the calls live in `agent.py::_run_step`). The search step is labelled
+`(via MCP)` because it goes through `mcp_client.call_tool`.
+
+**Happy path:** six steps.
 
 ```
-
+$ python app.py ask 'vintage graphic tee under $30, size M' --trace
+[1] parse_query
+      in:  'vintage graphic tee under $30, size M'
+      out: {'description': 'vintage graphic tee', 'size': 'M', 'max_price': 30.0}
+[2] search_listings (via MCP)
+      in:  {'description': 'vintage graphic tee', 'size': 'M', 'max_price': 30.0}
+      out: 10 items: Y2K Baby Tee — Butterfly Print, 90s Silk Slip Dress — Floral, Midi Length, Leather Belt — Brown, Braided … +7 more
+[3] select
+      in:  10 results
+      out: lst_002 Y2K Baby Tee — Butterfly Print ($18, depop)
+      →    search returned results, taking the first
+[4] suggest_outfit
+      in:  new_item=lst_002 (from session['selected_item']), wardrobe=10 items
+      out: Outfit 1: - Y2K Baby Tee — Butterfly Print - Baggy straight-leg jeans, dark wash - Vintage black denim jacket …
+[5] create_fit_card
+      in:  new_item=lst_002, outfit=267 chars from session['outfit_suggestion']
+      out: Found the dreamiest 2000s butterfly tee and had to share how to style it! Throw it on with dark baggy denim an…
+[6] done
+      →    fit card written, returning the session
 ```
 
-**Empty search**
+**Empty search:** three steps. It stops at the branch, and `suggest_outfit`
+and `create_fit_card` never run.
 
 ```
+$ python app.py ask 'sequined opera gloves size XXS under $3' --trace
+[1] parse_query
+      in:  'sequined opera gloves size XXS under $3'
+      out: {'description': 'sequined opera gloves', 'size': 'XXS', 'max_price': 3.0}
+[2] search_listings (via MCP)
+      in:  {'description': 'sequined opera gloves', 'size': 'XXS', 'max_price': 3.0}
+      out: [] (empty)
+[3] branch: empty search
+      out: No listings matched 'sequined opera gloves' in size XXS under $3. Nothing in the data matches the words 'sequi…
+      →    search_results is [], stopping before suggest_outfit
+
+  No listings matched 'sequined opera gloves' in size XXS under $3. Nothing in the data matches the words 'sequined opera gloves' even without filters. Try broader words like 'jacket', 'jeans', 'tee' or 'dress'. Prices in the data start at $12.
+
+0 model calls this session
+```
+
+### Failure modes, triggered on purpose
+
+All three were run on purpose. The model-unavailable case used a key with
+its last character changed, set for that one command
+(`GEMINI_API_KEY=<key with last char changed> python app.py ask ...`), so the
+real key in `.env` was never edited. That query hadn't been asked before, so
+the cache couldn't answer it.
+
+| Failure | How I triggered it | What it did before the handler | What it says now |
+|---|---|---|---|
+| Empty search | `'sequined opera gloves size XXS under $3'` | Already handled by the Unit 3 branch: stops after search and names what to change | Same. See the empty-search trace above |
+| Empty wardrobe | `--empty-wardrobe 'corduroy pants under $40'` | Already handled in `tools.py::suggest_outfit`: general advice, no owned pieces named | Same (output below) |
+| Model unavailable (bad key) | last character of the key changed, query `'olive canvas shacket size L'` | `run_agent` raised `ModelUnavailable`. `app.py` printed it, but the session was lost, so any other caller (`run_eval.py`, `serve.py`) would crash | Caught in `run_agent`. Names the step that broke, keeps the item already found, and says to check `GEMINI_API_KEY` |
+| Model unavailable (real 503, not planned) | Google's service returned `503 UNAVAILABLE`, "high demand", during my first empty-wardrobe run | Raised `ModelUnavailable` with the raw error dict in it: `{'error': {'code': 503, ...}}` | Caught by the same handler. Says the service is overloaded and to wait a minute and retry |
+
+Bad key, after the handler:
 
 ```
+$ GEMINI_API_KEY=<key with last char changed> python app.py ask 'olive canvas shacket size L' --trace
+[1] parse_query
+      in:  'olive canvas shacket size L'
+      out: {'description': 'olive canvas shacket', 'size': 'L', 'max_price': None}
+[2] search_listings (via MCP)
+      in:  {'description': 'olive canvas shacket', 'size': 'L', 'max_price': None}
+      out: 1 items: Shacket — Olive Canvas
+[3] select
+      in:  1 results
+      out: lst_032 Shacket — Olive Canvas ($33, poshmark)
+      →    search returned results, taking the first
+[4] suggest_outfit
+      out: ModelUnavailable
+      →    stopping: The model rejected your API key. Check GEMINI_API_KEY in your .env file, or create a fresh key at aistudio.google.com.
+
+  The search worked and found Shacket — Olive Canvas ($33 on poshmark), but the AI model couldn't be reached while putting together outfit ideas: it rejected the API key. Check GEMINI_API_KEY in your .env file, or make a fresh key at aistudio.google.com, then run the query again.
+```
+
+The real 503, after the handler (the same empty-wardrobe query, during the
+outage):
+
+```
+[5] create_fit_card
+      out: ModelUnavailable
+      →    stopping: Couldn't reach the model: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. ...', 'status': 'UNAVAILABLE'}}
+
+  The search worked and found Corduroy Wide-Leg Pants — Rust ($32 on depop), but the AI model couldn't be reached while writing the fit card: the model service is overloaded right now (503). This is usually temporary. Wait a minute and run the same query again.
+```
+
+Empty wardrobe, once the service was back:
+
+```
+$ python app.py ask --empty-wardrobe 'corduroy pants under $40'
+(running with an empty wardrobe)
+...
+[4] suggest_outfit
+      in:  new_item=lst_005 (from session['selected_item']), wardrobe=0 items
+      out: Pair these rust cords with a fitted cream ribbed turtleneck tucked in to balance the wide leg, layered with an…
+...
+  Outfit:   Pair these rust cords with a fitted cream ribbed turtleneck tucked in to balance the wide leg, layered with an oversized brown plaid blazer. Finish the look with platform leather clogs or brown ankle boots and a minimalist crossbody bag.
+Alternatively, keep it casual by pairing them with a cropped graphic tee or a vintage band t-shirt, thrown under an oversized distressed denim jacket. Add retro sneakers or canvas loafers for an effortless, everyday 70s-inspired vibe.
+
+  Fit card: Channeling major 70s energy with these gorgeous rust-colored wide-leg cords! They’re the ultimate earth-tone staple for your autumn wardrobe, and they can easily be dressed up with a blazer or kept casual with a band tee. Grab them on depop for just $32 before someone else snatches this vintage dream up. 🍂✨ #depop #vintagecords
+```
+
+I also added a handler for `MCPError`: if the search server doesn't answer,
+the run stops with "The listings search couldn't run … Run
+`python mcp_client.py` to see whether it starts". I didn't trigger that one
+for this table.
 
 **On the MCP move:** <!-- what changed in your code, and whether anything
 behaved differently afterwards. If the rewire didn't work, say exactly where it

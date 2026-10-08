@@ -19,7 +19,7 @@ import config
 import trace
 from tools import suggest_outfit, create_fit_card
 from generate import ModelUnavailable
-from mcp_client import call_tool
+from mcp_client import MCPError, call_tool
 
 
 # ── session state ─────────────────────────────────────────────────────────────
@@ -211,37 +211,119 @@ def run_agent(query: str, wardrobe: dict) -> dict:
         session["steps_run"].append(step)
 
         if step == "done":
+            trace.step("done", note="fit card written, returning the session")
             return session
 
-        if step == "parse":
-            session["parsed"] = parse_query(session["query"])
-
-        elif step == "search":
-            parsed = session["parsed"]
-            # Through MCP (mcp_server.py), not a direct call.
-            session["search_results"] = call_tool("search_listings", {
-                "description": parsed["description"],
-                "size": parsed["size"],
-                "max_price": parsed["max_price"],
-            })
-
-        elif step == "stop_empty":
-            # THE BRANCH: nothing found, so say what to change and stop here.
-            session["error"] = explain_empty(session["parsed"])
+        try:
+            _run_step(step, session)
+        except ModelUnavailable as exc:
+            session["error"] = _model_down_message(step, session, exc)
+            trace.step(step, returned="ModelUnavailable", note=f"stopping: {exc}")
             return session
-
-        elif step == "select":
-            session["selected_item"] = session["search_results"][0]
-
-        elif step == "suggest_outfit":
-            item = session["selected_item"]
-            session["outfit_input_id"] = item["id"]
-            session["outfit_suggestion"] = suggest_outfit(item, session["wardrobe"])
-
-        elif step == "create_fit_card":
-            session["fit_card"] = create_fit_card(
-                session["outfit_suggestion"], session["selected_item"]
+        except MCPError as exc:
+            session["error"] = (
+                "The listings search couldn't run, so nothing was searched. "
+                "The search tool's server (mcp_server.py) didn't answer. "
+                "Run `python mcp_client.py` to see whether it starts, then try "
+                "the same query again."
             )
+            trace.step(step, returned="MCPError", note=f"stopping: {str(exc).splitlines()[0]}")
+            return session
+
+        if session["error"]:
+            return session
+
+
+def _run_step(step: str, session: dict) -> None:
+    """Run one step: read its inputs from the session, write its result back."""
+    if step == "parse":
+        session["parsed"] = parse_query(session["query"])
+        trace.step("parse_query", inputs=repr(session["query"]), returned=str(session["parsed"]))
+
+    elif step == "search":
+        parsed = session["parsed"]
+        args = {
+            "description": parsed["description"],
+            "size": parsed["size"],
+            "max_price": parsed["max_price"],
+        }
+        # Through MCP (mcp_server.py), not a direct call.
+        session["search_results"] = call_tool("search_listings", args)
+        trace.step("search_listings (via MCP)", inputs=str(args), returned=session["search_results"])
+
+    elif step == "stop_empty":
+        # THE BRANCH: nothing found, so say what to change and stop here.
+        session["error"] = explain_empty(session["parsed"])
+        trace.step(
+            "branch: empty search",
+            returned=session["error"],
+            note="search_results is [], stopping before suggest_outfit",
+        )
+
+    elif step == "select":
+        session["selected_item"] = session["search_results"][0]
+        item = session["selected_item"]
+        trace.step(
+            "select",
+            inputs=f"{len(session['search_results'])} results",
+            returned=f"{item['id']} {item['title']} (${item['price']:.0f}, {item['platform']})",
+            note="search returned results, taking the first",
+        )
+
+    elif step == "suggest_outfit":
+        item = session["selected_item"]
+        session["outfit_input_id"] = item["id"]
+        session["outfit_suggestion"] = suggest_outfit(item, session["wardrobe"])
+        trace.step(
+            "suggest_outfit",
+            inputs=f"new_item={item['id']} (from session['selected_item']), "
+                   f"wardrobe={len(session['wardrobe'].get('items') or [])} items",
+            returned=session["outfit_suggestion"],
+        )
+
+    elif step == "create_fit_card":
+        session["fit_card"] = create_fit_card(
+            session["outfit_suggestion"], session["selected_item"]
+        )
+        trace.step(
+            "create_fit_card",
+            inputs=f"new_item={session['selected_item']['id']}, "
+                   f"outfit={len(session['outfit_suggestion'])} chars from session['outfit_suggestion']",
+            returned=session["fit_card"],
+        )
+
+
+_STEP_WORDS = {
+    "suggest_outfit": "putting together outfit ideas",
+    "create_fit_card": "writing the fit card",
+}
+
+
+def _model_down_message(step: str, session: dict, exc: Exception) -> str:
+    """Name what broke, keep what already worked, and say what to try."""
+    text = str(exc)
+    lowered = text.lower()
+    if "api key" in lowered:
+        why = "it rejected the API key"
+        fix = (
+            "Check GEMINI_API_KEY in your .env file, or make a fresh key at "
+            "aistudio.google.com, then run the query again."
+        )
+    elif "503" in text or "unavailable" in lowered or "high demand" in lowered:
+        why = "the model service is overloaded right now (503)"
+        fix = "This is usually temporary. Wait a minute and run the same query again."
+    else:
+        why = text.splitlines()[0][:160]
+        fix = "Check your internet connection, then run the same query again."
+
+    doing = _STEP_WORDS.get(step, step)
+    item = session.get("selected_item")
+    found = (
+        f"The search worked and found {item['title']} (${item['price']:.0f} on "
+        f"{item['platform']}), but "
+        if item else ""
+    )
+    return f"{found}the AI model couldn't be reached while {doing}: {why}. {fix}"
 
 
 def _next_step(session: dict) -> str:
