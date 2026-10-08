@@ -59,7 +59,7 @@ works with a direct call, and **a documented failure earns the point in full.**
 
 from mcp.server.fastmcp import FastMCP
 
-from tools import search_listings as _search_listings_impl  # noqa: F401 — you'll use this below
+from tools import search_listings as _search_listings_impl
 
 # log_level="WARNING" keeps the server from printing an INFO line for every
 # request. Without it your terminal fills with "Processing request of type
@@ -67,23 +67,36 @@ from tools import search_listings as _search_listings_impl  # noqa: F401 — you
 mcp = FastMCP("fitfindr", log_level="WARNING")
 
 
-# ── TODO: uncomment and fill this in ──────────────────────────────────────────
-#
-# @mcp.tool()
-# def search_listings(
-#     description: str,
-#     size: str | None = None,
-#     max_price: float | None = None,
-# ) -> list[dict]:
-#     """
-#     <-- YOUR DESCRIPTION GOES HERE.
-#
-#         One or two sentences. What does this tool do, what does it need, and
-#         what does it give back when it finds nothing? Written for a reader
-#         who cannot see the code.
-#     """
-#     return _search_listings_impl(description, size, max_price)
-#
+@mcp.tool()
+def search_listings(
+    description: str,
+    size: str | None = None,
+    max_price: float | None = None,
+) -> list[dict]:
+    """
+    Search 40 secondhand clothing listings (Depop, ThredUp, Poshmark) by
+    keywords, with an optional size and an optional price ceiling.
+
+    Inputs:
+      description: keywords for the item, e.g. "vintage graphic tee". Case is
+                   ignored and filler words like "a" or "for" are skipped.
+      size:        optional. A size such as "M", "8" (shoe) or "W30" (waist).
+                   Matches whole size tokens, so "M" matches "S/M" and "M/L"
+                   but not "XL", and "8" matches "US 8" but not "US 8.5".
+                   "One Size" listings match any size. Omit to skip.
+      max_price:   optional. Maximum price in US dollars, inclusive
+                   (e.g. 30 or 29.99). Omit to skip.
+
+    Returns a list of up to 10 listing objects, best keyword match first. Each
+    has: id, title, description, category, style_tags (list of str), size,
+    condition, price (number, USD), colors (list of str), brand (str or null;
+    null for most listings) and platform.
+
+    When nothing matches, returns an empty list [] rather than an error.
+    """
+    return _search_listings_impl(description, size, max_price)
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 #
 # Two notes on the block above.

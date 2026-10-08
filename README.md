@@ -452,6 +452,27 @@ behaved differently afterwards. If the rewire didn't work, say exactly where it
 broke — the error text and the last thing that worked. That earns the point in
 full. -->
 
+I moved `search_listings`, the tool that doesn't call the model. In
+`mcp_server.py` it is registered with `@mcp.tool()`, with the same typed
+inputs as the Tool Inventory: `description: str`, `size: str | None`,
+`max_price: float | None`. Its description states the units (US dollars,
+inclusive), the size rule, and that an empty list is returned when nothing
+matches. `python mcp_client.py` lists it with `description: string`,
+`size: string (optional)` and `max_price: number (optional)`.
+
+In `agent.py`, both places that searched now go through
+`mcp_client.call_tool("search_listings", {...})`: the main search step in
+`run_agent`, and the relaxed re-searches in `explain_empty`. `tools.py` is
+unchanged.
+
+**Did anything behave differently?** Not in what came back. I compared
+`call_tool` against the direct call on three inputs: a match (10 results), the
+impossible query (`[]`), and a size-only query with `max_price=None` (5
+results). All three were identical (`==` is True), including the empty list,
+which comes back as a `list` and not as a string or `None`. What changed is
+speed: each call starts the server process. The impossible query makes four
+MCP calls (the search plus three relaxed re-searches), and the whole run took
+2.3 seconds.
 
 
 ---

@@ -17,8 +17,9 @@ import re
 
 import config
 import trace
-from tools import search_listings, suggest_outfit, create_fit_card
+from tools import suggest_outfit, create_fit_card
 from generate import ModelUnavailable
+from mcp_client import call_tool
 
 
 # ── session state ─────────────────────────────────────────────────────────────
@@ -95,7 +96,7 @@ def explain_empty(parsed: dict) -> str:
     """
     Say what the user could change, not just that nothing came back.
 
-    Re-runs search_listings (no model call) with one filter relaxed at a time
+    Re-runs search_listings over MCP (no model call) with one filter relaxed at a time
     and reports which relaxation would have found something.
     """
     desc, size, price = parsed["description"], parsed["size"], parsed["max_price"]
@@ -122,7 +123,7 @@ def explain_empty(parsed: dict) -> str:
         tries.append(("drop both the size and the price limit", dict(description=desc, size=None, max_price=None)))
 
     for advice, kwargs in tries:
-        found = search_listings(**kwargs)
+        found = call_tool("search_listings", kwargs)
         if found:
             cheapest = min(item["price"] for item in found)
             top = found[0]
@@ -217,9 +218,12 @@ def run_agent(query: str, wardrobe: dict) -> dict:
 
         elif step == "search":
             parsed = session["parsed"]
-            session["search_results"] = search_listings(
-                parsed["description"], parsed["size"], parsed["max_price"]
-            )
+            # Through MCP (mcp_server.py), not a direct call.
+            session["search_results"] = call_tool("search_listings", {
+                "description": parsed["description"],
+                "size": parsed["size"],
+                "max_price": parsed["max_price"],
+            })
 
         elif step == "stop_empty":
             # THE BRANCH: nothing found, so say what to change and stop here.
