@@ -480,14 +480,67 @@ results: [('lst_037', 'W28', 30.0)]
 
 | # | Criterion | Target | Verdict | How I decided |
 |---|---|---|---|---|
-| 1 |  |  |  |  |
-| 2 |  |  |  |  |
-| 3 |  |  |  |  |
-| 4 |  |  |  |  |
-| 5 |  |  |  |  |
+| 1 | Matching query completes all three tools | 4 of 5 | **MISSED (3/5)** | Counted tries where `error` is None and `fit_card` is non-empty. Tries 4 and 5 stopped at `suggest_outfit` with no fit card. 3 is below 4. The failures came from Google's service, not my logic, but the criterion says "completes… and returns a fit card", and these didn't. My Unit 3 reason allowed one service error in five, and there were two. |
+| 2 | Impossible query stops before suggest_outfit | 5 of 5 | MET (5/5) | All five: `steps_run` ended at `stop_empty`, `outfit_suggestion` and `fit_card` were None, and the message named a change ("Try broader words like 'jacket', 'jeans'…", plus the $12 price floor). |
+| 3 | Same item at every step of the session | 5 of 5 | MET (5/5) | All five: `search_results[0]`, `selected_item` and `outfit_input_id` were all `lst_004`, and the fit card contained `$45`. |
+| 4 | Fit card: 2–4 sentences, ≤400 chars, price, platform | 4 of 5 | MET (5/5) | All five cards passed (a)–(d): 2–3 sentences, 207–273 chars, `$30`, and "depop" (one wrote "Depop"; the criterion says ignoring case). The five first sentences were all different. I checked the sentence counts by hand, not just the scorer. |
+| 5 | Search respects price and size (5 queries) | 5 of 5 | MET (5/5) | For each query, every result's price was at or under the ceiling and every size was in a hand-written allowed set taken from the data (not my code's matcher). `parsed` matched the query each time. All 25 runs were identical. |
 
 **Diagnoses**
 
+**Criterion 1 (MISSED, 3/5). Place: a tool, specifically the model call
+inside `suggest_outfit`. Mechanism: a temporary 503 is treated as permanent.**
+
+Tries 4 and 5 both reached `suggest_outfit` with the right item (`lst_002`,
+Y2K Baby Tee). The search, the branch and the session all worked. Then
+`generate()` got `503 UNAVAILABLE — "This model is currently experiencing high
+demand… usually temporary"` from Google. In `generate.py`, the `except` block
+retries only when the error looks like a rate limit (`429`, "resource
+exhausted", "rate limit"). Anything else raises `ModelUnavailable` on the
+first attempt, with no wait and no second try. My handler in `run_agent`
+caught it and stopped cleanly with a message, so nothing crashed, but the run
+ended with no outfit and no fit card.
+
+**The pattern: this is one problem, not several.** All six failed runs in
+the whole test were this same 503 at the same step:
+- criterion 1, tries 4–5;
+- the empty-wardrobe diagnostic, tries 1–4.
+
+They were six runs in a row. Every run after that
+window completed, including all 45 runs for criteria 3, 4 and 5. Each
+failure was the first model call of its run, and each run that got past
+`suggest_outfit` also finished `create_fit_card`. So the agent isn't
+unreliable in general. It has no tolerance for a brief overload, which the
+error message itself calls "usually temporary".
+
+That also explains why criterion 1 missed and criteria 3 and 4 didn't. Their
+queries simply ran after the outage had passed. With five tries per
+criterion, *when* a criterion runs decides whether it meets its target. That
+is the weakness, and it's what the fix should remove.
+
+**On the four criteria I met, and whether my targets were too low:**
+
+- **Criterion 5 is my easiest target.** The search is deterministic code
+  with no model in it, so 25 identical runs mostly confirm that it doesn't
+  vary. What makes it a real test is the hand-written allowed sizes, which
+  could have caught a bad size matcher. It didn't.
+- **Criterion 4 is the one I'd tighten.** It passed 5 of 5, but the
+  "no shared first sentence" check only catches word-for-word copies.
+  Reading the five cards, two open almost the same way: "Obsessed with this
+  90s floral silk midi!" and "Obsessed with this 90s floral slip dress!".
+  Two more follow one template: "Found the ultimate/dreamiest 90s floral
+  midi … on depop for just $30". A stricter version would be "no two of
+  the 5 cards share their first three words". Under that, cards 2 and 5
+  ("Obsessed with this") would fail. I'm not revising the criterion, since
+  it was measurable and I applied it as written. I'm noting it as too loose.
+- **Criterion 2: arguing the opposite verdict.** For the ballgown query, the
+  message gives no single filter to drop, because nothing in the data
+  matches those words even without filters. It says to use broader words
+  and gives the $12 price floor. Someone could argue that isn't "naming
+  what to change". I count it as MET because it names the part of the
+  query that failed (the words) and gives concrete replacements. It is the
+  weakest of the four relaxations, though, and a stricter reader could
+  call it a partial.
 
 
 ---
