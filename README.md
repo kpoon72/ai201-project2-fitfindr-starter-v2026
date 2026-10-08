@@ -374,19 +374,88 @@ it.
      `python run_eval.py --label before` runs everything and writes the table
      into results/. Paste it here and fill in the verdicts. -->
 
+Run with `python run_eval.py --label before`: every scenario in `scenarios.py`
+five times, cache off, temperature 0.9, 84 model calls. Full output is in
+`results/run_2026-10-07_1926_before.md`, and the raw sessions are in the
+`.json` file beside it. Each try was marked PASS/FAIL by `score_eval.py`,
+which applies `criteria.md` as written. I then read the failing tries and the
+fit cards myself to confirm.
+
 | Criterion | Target | Try 1 | Try 2 | Try 3 | Try 4 | Try 5 | Verdict |
 |---|---|---|---|---|---|---|---|
-| 1.  |  |  |  |  |  |  |  |
-| 2.  |  |  |  |  |  |  |  |
-| 3.  |  |  |  |  |  |  |  |
-| 4.  |  |  |  |  |  |  |  |
-| 5.  |  |  |  |  |  |  |  |
+| 1. Matching query completes all three tools | 4 of 5 | PASS | PASS | PASS | FAIL | FAIL | MISSED (3/5) |
+| 2. Impossible query stops before suggest_outfit | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 3. Same item at every step of the session | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 4. Fit card: 2–4 sentences, ≤400 chars, price, platform | 4 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 5. Search respects price and size (5 queries) | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
 
-**Real output from one try**, pasted as text, naming the file and function
-that produced it:
+How the tries map to scenarios:
+- **Criteria 1–4:** one query each, run five times. C1 `'vintage graphic tee under $30'`, C2 `'designer ballgown size XXS under $5'`, C3 `'90s track jacket in size M'`, C4 `'silk slip dress in midi length under $40'`.
+- **Criterion 5:** names five fixed queries, so each try is one query, in the order listed in `criteria.md`. Each query was also run five times, and a query only counts as PASS if all five of its runs had zero violations.
+- **Not in the table:** the starter's empty-wardrobe scenario is a diagnostic, not one of my five. It completed 1 of 5 times. The other four stopped on the same 503 error that failed criterion 1's tries 4 and 5.
+
+**Real output from one try per criterion.** It all comes from
+`agent.py::run_agent`, read from the session it returned
+(`results/run_2026-10-07_1926_before.json`).
+
+Criterion 1, try 1 (PASS), `'vintage graphic tee under $30'`:
 
 ```
+steps_run: ['parse', 'search', 'select', 'suggest_outfit', 'create_fit_card', 'done']
+fit_card:  Butterfly graphics are peak early 2000s, and this little tee is giving total downtown-girl-meets-mall-rat vibes. Throw it on with dark baggy denim and a black jacket, or dress it up with khaki trousers and combat boots. Grab it on depop for just $18 before I change my mind and keep it! 🦋✨ #y2k #thrift
+```
 
+Criterion 1, try 4 (FAIL), the same query:
+
+```
+steps_run: ['parse', 'search', 'select', 'suggest_outfit']
+error:     The search worked and found Y2K Baby Tee — Butterfly Print ($18 on depop), but the AI model couldn't be reached while putting together outfit ideas: the model service is overloaded right now (503). This is usually temporary. Wait a minute and run the same query again.
+trace:     [4] suggest_outfit
+                 out: ModelUnavailable
+                 →    stopping: Couldn't reach the model: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}
+```
+
+Criterion 2, try 1 (PASS):
+
+```
+steps_run:          ['parse', 'search', 'stop_empty']
+outfit_suggestion:  None
+fit_card:           None
+error:              No listings matched 'designer ballgown' in size XXS under $5. Nothing in the data matches the words 'designer ballgown' even without filters. Try broader words like 'jacket', 'jeans', 'tee' or 'dress'. Prices in the data start at $12.
+```
+
+Criterion 3, try 1 (PASS), `'90s track jacket in size M'`:
+
+```
+search_results[0]['id']: lst_004
+selected_item['id']:     lst_004
+outfit_input_id:         lst_004
+fit_card: Found the ultimate 90s Champion track jacket and I'm obsessed with the sleeve stripes. It's in amazing condition and is so easy to throw over baggy denim or khaki trousers. Grab it on Poshmark for just $45 before I change my mind and keep it! 🤌💙 #vintagestyle
+```
+
+Criterion 4: all five cards for `'silk slip dress in midi length under $40'`
+(item: 90s Silk Slip Dress, $30, depop). Scored as
+sentences / chars / price / platform:
+
+```
+1  3 / 273 / $30 / depop   Living in 90s slip dresses all season long. I love styling this floral midi with a chunky grey crewneck and combat boots for that perfect grunge-romance contrast, or throwing on a denim jacket and sneakers for an easy indie-sleaze day out. Grab it on depop for just $30! ✨🌸
+2  3 / 248 / $30 / depop   Obsessed with this 90s floral silk midi! It’s the ultimate layering piece—wear it over a ribbed tee with chunky sneakers, or throw an oversized crewneck right over it to fake a skirt. Grab it on depop for $30 before I change my mind. 🌸✨ #90s #depop
+3  2 / 248 / $30 / Depop   Found the ultimate 90s floral midi slip on Depop for just $30! 🌸 It’s so dreamy on its own, but I’m obsessed with styling it gritty under an oversized sweatshirt and combat boots, or layered over a ribbed tank for daytime. ☁️✨ #90sStyle #ThriftFind
+4  2 / 208 / $30 / depop   Found the dreamiest 90s floral midi on depop for just $30 ✨ Style it grunge-meets-romance with a black denim jacket and combat boots, or keep it cozy with an oversized crewneck. So versatile! #90sstyle #depop
+5  3 / 207 / $30 / depop   Obsessed with this 90s floral slip dress! Grab it on depop for just $30. Style it grunge-style with a denim jacket and combat boots, or throw a crewneck over it for a textured midi skirt look. 🥀✨ #90s #depop
+first sentences: 5 distinct of 5
+```
+
+Criterion 5, try 2 (PASS), `'90s track jacket in size M'`, plus try 5:
+
+```
+parsed:  {'description': '90s track jacket', 'size': 'M', 'max_price': None}
+results: [('lst_004', 'M', 45.0), ('lst_022', 'M', 75.0), ('lst_013', 'M', 30.0), ('lst_034', 'One Size', 14.0), ('lst_032', 'M/L', 33.0)]
+         → every size is in {M, S/M, M/L, One Size…}; 0 violations, same 5 results on all 5 runs
+
+parsed:  {'description': 'jeans', 'size': 'W28', 'max_price': 35.0}
+results: [('lst_037', 'W28', 30.0)]
+         → W28 and $30 ≤ $35; 0 violations on all 5 runs
 ```
 
 ---

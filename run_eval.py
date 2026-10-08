@@ -203,9 +203,26 @@ def write_report(rows, args):
 
     path.write_text("\n".join(lines), encoding="utf-8")
 
+    # The raw sessions too, so score_eval.py can check each criterion against
+    # the actual fields rather than the summary above.
+    import json
+    raw = [
+        {
+            "scenario": row["scenario"],
+            "tries": [
+                {"crashed": r["crashed"], "session": r["session"], "trace": r["trace"]}
+                for r in row["tries"]
+            ],
+        }
+        for row in rows
+    ]
+    path.with_suffix(".json").write_text(
+        json.dumps(raw, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
     import generate
 
-    print(f"Wrote {path.relative_to(config.ROOT)}")
+    print(f"Wrote {path.relative_to(config.ROOT)} and {path.with_suffix('.json').name}")
     print(generate.usage())
     print("\nCommit this file. It's the evidence the test actually happened.")
 

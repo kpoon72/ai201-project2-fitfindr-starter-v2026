@@ -35,18 +35,56 @@ SCENARIOS = [
         "wardrobe": "empty",
         "criterion": None,
     },
-    # TODO: add what your criteria 3, 4 and 5 need.
-    #
-    # Set "criterion" to the number in criteria.md that the scenario tests.
-    # "criterion": None means a diagnostic run — useful to have, but it isn't
-    # one of your five, and run_eval.py marks it as such in the table.
-    #
-    # For a state criterion, any normal query works — what you're checking is
-    # what ends up in the session, not what the user typed.
-    #
-    # For a fit-card criterion, you probably want the SAME query listed more
-    # than once, or several different items, depending on what your criterion
-    # actually says.
+    {
+        # Criterion 3 — state. Any completing query works; what's checked is
+        # whether the same listing id is in search_results[0], selected_item
+        # and outfit_input_id, and whether the fit card carries its price.
+        "name": "state carries the same item",
+        "query": "90s track jacket in size M",
+        "wardrobe": "example",
+        "criterion": 3,
+    },
+    {
+        # Criterion 4 — the fit card. The SAME query five times, so the five
+        # cards can be compared with each other (shared first sentence).
+        "name": "fit card facts and length",
+        "query": "silk slip dress in midi length under $40",
+        "wardrobe": "example",
+        "criterion": 4,
+    },
+    # Criterion 5 — search respects price and size. Criterion 5 names five
+    # fixed queries, and each query is one of its five tries. run_eval runs
+    # every scenario five times, so each query also gets checked five times.
+    {
+        "name": "filters: tee under $30",
+        "query": "vintage graphic tee under $30",
+        "wardrobe": "example",
+        "criterion": 5,
+    },
+    {
+        "name": "filters: track jacket size M",
+        "query": "90s track jacket in size M",
+        "wardrobe": "example",
+        "criterion": 5,
+    },
+    {
+        "name": "filters: sneakers size 8",
+        "query": "platform sneakers size 8",
+        "wardrobe": "example",
+        "criterion": 5,
+    },
+    {
+        "name": "filters: denim jacket under $50",
+        "query": "denim jacket under $50",
+        "wardrobe": "example",
+        "criterion": 5,
+    },
+    {
+        "name": "filters: jeans W28 under $35",
+        "query": "jeans size W28 under $35",
+        "wardrobe": "example",
+        "criterion": 5,
+    },
 ]
 
 WARDROBES = ("example", "empty")
