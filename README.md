@@ -356,6 +356,36 @@ five. The brief warns that a criterion you didn't write is one you can't
 defend, so I read each one against the data and the code before committing
 it.
 
+**Unit 4: Moment 3, the failure I didn't plan for**
+
+- *What I asked for:* Trigger the three failure modes before writing any
+  handler, and record what the agent did.
+- *What came back:* The bad-key test worked as expected. But the
+  empty-wardrobe test failed for a different reason: Google returned a real
+  `503 "high demand"`, the run died, and the outfit already generated was
+  lost.
+- *What I changed:* The handler in `agent.py::run_agent` became more than a
+  bad-key message. It names the step that failed, keeps the item already
+  found, and gives a different fix for a 503 (wait and retry) than for a bad
+  key (check `.env`). That unplanned 503 also turned out to be the whole
+  diagnosis for criterion 1, and so it decided the improvement.
+
+**Unit 4: Moment 4, checking the write-up against the log**
+
+- *What I asked for:* A scorer for the run log, and a first draft of the
+  diagnosis and the improvement write-up.
+- *What came back:* The scorer was written so criterion 5 checks sizes
+  against a hand-written list from the data, not the size matcher in
+  `tools.py`, so the code wasn't grading itself. The first draft of the
+  write-up also had two claims the log didn't support. It said the outage
+  lasted "about four minutes", but the log has no timestamps. And it said
+  the 8 retries were "7 after one wait and 1 after two", which comes to 9.
+- *What I changed:* I checked both against the log and corrected them: "six
+  runs in a row", and "6 after one wait, 1 after two". I also read the fit
+  cards myself rather than trusting the scorer's sentence count. That's how
+  I noticed the repeated "Obsessed with this" openings in What's Still
+  Broken.
+
 <!-- ═══════════════════════ UNIT 4 — THE TEST ═══════════════════════
 
      Don't fill these in during unit 3.
@@ -796,6 +826,56 @@ already met, so this run isn't evidence of any further improvement there.
 <!-- For each criterion still missed: what you'd do, and why you stopped where
      you did. "I ran out of time" is fine if it's true. Pretending nothing is
      left is not. -->
+
+All five criteria were met in the after-run, so no criterion is still
+missed. That doesn't mean nothing is broken. Here's what's left, roughly in
+the order I'd fix it.
+
+**1. A 503 outage longer than about a minute still ends the run.** The
+retry waits 5 + 10 + 20 + 30 = 65s, then gives up. Next I would keep the item
+and the outfit in the session and let the user retry only the step that
+failed, instead of re-running the whole query. I stopped at the simple retry
+because the brief allows one change, and the retry alone fixed every 503 I
+actually saw (8 of 8).
+
+**2. Criterion 4 is met but too loose, and the cards are templated.** No two
+cards shared a whole first sentence, but their first three words repeat:
+
+| Run | First three words of the 5 slip-dress cards |
+|---|---|
+| Before | "Obsessed with this" ×2, "Living in 90s", "Found the ultimate", "Found the dreamiest" |
+| After | "Obsessed with this" ×3, "Found the ultimate", "Found the absolute" |
+
+Under a stricter test ("no two cards share their first three words") this
+would have missed both times. To fix it, I'd change the `create_fit_card`
+prompt in `tools.py` to rule out the openings the model leans on ("Obsessed
+with", "Found the"), or to ask for an opening that starts from the outfit
+rather than the item, then measure with the stricter test. I didn't do it in
+this unit because it's a second change, and because the criterion as filed
+was met.
+
+**3. Search ranking is never tested.** Criterion 5 checks that results obey
+the price and size filters, not that the best item comes first. For
+`'vintage graphic tee under $30'`, the first result is the Y2K Baby Tee, a
+butterfly print. The listing literally titled "Graphic Tee — 2003 Tour
+Bootleg Style" comes second, because both score the same and ties keep file
+order. Low-relevance items also get through: a "Leather Belt" appears in the
+results for `'vintage graphic tee, size M'`, matching on "vintage" alone. I'd
+add a criterion like "for 5 queries naming an item type, the first result's
+title or category contains that type". I'd fix it by weighting title matches
+above tag-only matches in `tools.py::_score`.
+
+**4. The "no matches at all" message is the weakest one.** For
+`'designer ballgown…'` it can't name a single filter to drop, because
+nothing matches the words even with no filters. So it falls back to generic
+suggestions ("jacket, jeans, tee, dress"). It could suggest the closest real
+category instead (dresses, for a ballgown). I left it because criterion 2
+passes on it, and I said in the diagnoses why that's arguable.
+
+**5. Two paths were never triggered.** The `MCPError` handler (search server
+doesn't start) and the case where retries run out on a 503 (only tested with
+a fake client, never against the real service). Both stop with a message in
+code, but I haven't seen either happen for real.
 
 
 
