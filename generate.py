@@ -328,6 +328,29 @@ def generate(
                 or "resource" in message and "exhaust" in message
                 or "rate" in message and "limit" in message
             )
+            # Unit 4 improvement: a 503 "high demand" is the service saying it
+            # is briefly overloaded, not that the key or model is wrong. It
+            # used to raise on the first attempt and end the whole run. Wait
+            # and retry it instead, the same way a rate limit is retried.
+            overloaded = (
+                "503" in message
+                or "unavailable" in message
+                or "high demand" in message
+                or "overloaded" in message
+            )
+            if overloaded:
+                if attempt == config.MAX_RETRIES - 1:
+                    raise ModelUnavailable(_explain(exc)) from exc
+                backoff = min(30.0, 5.0 * 2 ** attempt)
+                print(
+                    f"  [busy] the model service is overloaded (503). Waiting "
+                    f"{backoff:.0f}s (attempt {attempt + 1} of "
+                    f"{config.MAX_RETRIES}).",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                time.sleep(backoff)
+                continue
             if not rate_limited:
                 raise ModelUnavailable(_explain(exc)) from exc
             backoff = _retry_delay(exc, attempt)

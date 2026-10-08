@@ -710,27 +710,85 @@ MCP calls (the search plus three relaxed re-searches), and the whole run took
 
      `python run_eval.py --label after` -->
 
-**What I changed:**
+**What I changed:** One thing, in `generate.py::generate`, which every
+model call goes through. Before, a `503 UNAVAILABLE / "high demand"` error
+raised `ModelUnavailable` on the first attempt. Now it is retried after
+waiting 5s, 10s, 20s, then 30s, so up to 5 attempts and about 65s of waiting
+in total. Each wait prints `[busy] the model service is overloaded (503).
+Waiting 5s (attempt 1 of 5).` If the last attempt is still a 503, it raises
+`ModelUnavailable` as before, so the Milestone 2 handler still catches it.
 
-**Which failure it was meant to fix:**
+Nothing else changed: not `tools.py`, not `agent.py`, not the scenarios, not
+the criteria. Rate-limit (429) handling is unchanged. A bad key still fails
+on the first attempt with no retries.
+
+Before the full re-run, I tested the change with a fake client that raises a
+503:
+- 503 twice, then success: returned the text after 3 calls.
+- 503 every time: raised `ModelUnavailable` after 5 calls.
+- Bad key: raised `ModelUnavailable` after 1 call.
+
+**Which failure it was meant to fix:** criterion 1's miss (3/5). Per the
+diagnosis, both failed tries, and all six failed runs in the whole before
+test, were a temporary 503 at the first model call, `suggest_outfit`. The
+search, branch and session had all worked.
 
 ### Run Log — After
 
+`python run_eval.py --label after`: the same scenarios, five tries each,
+cache off, temperature 0.9. Output is in `results/run_2026-10-07_1944_after.md`
+and `.json`, scored with `score_eval.py`.
+
 | Criterion | Target | Try 1 | Try 2 | Try 3 | Try 4 | Try 5 | Verdict |
 |---|---|---|---|---|---|---|---|
-| 1.  |  |  |  |  |  |  |  |
-| 2.  |  |  |  |  |  |  |  |
-| 3.  |  |  |  |  |  |  |  |
-| 4.  |  |  |  |  |  |  |  |
-| 5.  |  |  |  |  |  |  |  |
+| 1. Matching query completes all three tools | 4 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 2. Impossible query stops before suggest_outfit | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 3. Same item at every step of the session | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 4. Fit card: 2–4 sentences, ≤400 chars, price, platform | 4 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 5. Search respects price and size (5 queries) | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
 
-**Did it help, and how do I know:**
+Before and after, side by side:
 
-<!-- If it made things worse, say that. Honestly reported, that earns full
-     credit and is more interesting than one that worked. -->
+| Criterion | Target | Before | After |
+|---|---|---|---|
+| 1 | 4 of 5 | MISSED (3/5) | MET (5/5) |
+| 2 | 5 of 5 | MET (5/5) | MET (5/5) |
+| 3 | 5 of 5 | MET (5/5) | MET (5/5) |
+| 4 | 4 of 5 | MET (5/5) | MET (5/5) |
+| 5 | 5 of 5 | MET (5/5) | MET (5/5) |
+| empty-wardrobe diagnostic (not one of the five) | — | completed 1/5 | completed 5/5 |
+| model calls for the whole test | — | 84 | 98 |
 
+**Did it help, and how do I know:** Yes, for criterion 1. And it wasn't
+just that the service happened to be calm during the second run. Google
+returned 503s again: the after log shows **8 `[busy]` retries across 7
+runs**, and **every one recovered**, 6 after one 5s wait and 1 after a 5s
+and a 10s wait. Two of those runs were criterion 1's own tries:
 
+```
+try 2: [busy] the model service is overloaded (503). Waiting 5s (attempt 1 of 5).
+       → completed, fit card 290 chars
+try 5: [4] suggest_outfit
+             out: Outfit 1: - Y2K Baby Tee — Butterfly Print - Baggy straight-leg jeans, …
+         [busy] the model service is overloaded (503). Waiting 5s (attempt 1 of 5).
+       [5] create_fit_card
+             out: Channeling major early 2000s energy with this butterfly baby tee! 🦋 Grab it on depop for just $18 …
+       [6] done
+```
 
+Under the old code, tries 2 and 5 would have stopped with `ModelUnavailable`,
+leaving criterion 1 at 3/5, a miss again. With the retry they completed,
+for 5/5. The empty-wardrobe diagnostic shows the same thing: 1/5 → 5/5, with
+its tries 2 and 4 recovering from 503s (try 4 needed two waits).
+
+**What it cost:** 98 model calls instead of 84. That's the 8 retries plus
+the extra calls from runs that now get as far as the fit card instead of
+stopping at `suggest_outfit`. Each retried run also took 5–15 seconds longer.
+
+**What it doesn't fix:** an outage longer than about 65 seconds still ends
+the run, now after a minute of waiting rather than instantly. And on
+criteria 2–5 the after-run shows only that nothing got worse. Those were
+already met, so this run isn't evidence of any further improvement there.
 ---
 
 ## What's Still Broken
